@@ -1,4 +1,6 @@
-// LOUNGE
+/*
+ * CANVAS
+ */
 
 function getRandomInt(max) {
   return Math.floor(Math.random() * Math.floor(max));
@@ -26,7 +28,7 @@ const drawThingy = (x, y, h1, h2, v1, v2, color) => {
 	c.lineTo(x-h1, y+v2)
 	c.lineTo(x, y)
 
-	c.fillStyle = colors[getRandomInt(5)]
+	c.fillStyle = 'black'
 
 	c.lineWidth = 4
 	c.strokeStyle = '#ffffff'
@@ -76,45 +78,188 @@ class Grid {
 }
 
 const g = new Grid(8, 8, 40, 70, 15, 40)
-g.draw(350, 150)
 
-const drawPlayer = (x, y) => {
-	c.beginPath()
-	c.rect(x-10, y-10, 20, 20)
-	c.fillStyle = 'white'
-	c.fill()
+class Player {
+	constructor(id, username, l, c) {
+		this.id = id
+		this.username = username
+
+		this.l = l
+		this.c = c
+
+		this.pos = { x : 0, y : 0 }
+
+		this.last_message = ""
+
+		this.color = colors[getRandomInt(5)]
+	}
+
+	move(l, c) {
+		this.l = l
+		this.c = c
+	}
+
+	draw_last_message() {
+		c.font = "30px Arial";
+		c.fillStyle = 'white'
+		c.fillText(this.last_message, this.pos.x-30, this.pos.y-60)
+	}
+
+	draw_username() {
+		c.font = "30px Arial";
+		c.fillStyle = 'white'
+		c.fillText(this.username, this.pos.x-30, this.pos.y+30)
+	}
+
+	draw() {
+		this.pos = g.getCenter(this.l, this.c)
+		
+		c.beginPath()
+		c.rect(this.pos.x-15, this.pos.y-50, 30, 60)
+		c.fillStyle = this.color
+		c.fill()
+
+		this.draw_last_message()
+		this.draw_username()
+	}
+}
+
+let players = []
+
+const addPlayer = (p_obj) => {
+	players.push(p_obj)
+}
+
+const removePlayer = (p_obj) => {
+	players = players.filter(p => (p.id != p_obj.id))
+}
+
+const drawPlayers = (players) => {
+	players.forEach(p => p.draw())
 }
 
 let px = 0, py = 0
-let cpos = g.getCenter(0, 0)
-drawPlayer(cpos.x, cpos.y)
 
 document.addEventListener("keydown", (event) => {
-	if (event.key == "a") { py-- };
-	if (event.key == "d") { py++ };
-	if (event.key == "w") { px-- };
-	if (event.key == "s") { px++ };
+	let moved = false;
 
-	c.clearRect(0, 0, canvas.width, canvas.height);
+	if (event.key == "a") {
+		px--
+		moved = true
+	};
+	if (event.key == "d") {
+		px++
+		moved = true
+	};
+	if (event.key == "w") {
+		py--
+		moved = true
+	};
+	if (event.key == "s") {
+		py++
+		moved = true
+	};
 
-	let cpos = g.getCenter(px, py);
-	g.draw(350, 150)
-	drawPlayer(cpos.x, cpos.y)
+	if (moved) move(py, px)
 })
 
-// NETWORKING
+const draw = () => {
+	c.clearRect(0, 0, canvas.width, canvas.height);
+
+	g.draw(350, 80)
+	drawPlayers(players)
+
+	//window.requestAnimationFrame(draw)
+}
+
+const move = (x, y) => {
+	const message = {
+		type: "player-update",
+		subtype: "move",
+		x: x,
+		y: y
+	}
+	sendMessage(message)
+}
+
+
+// MESSAGE
+
+message_input = document.getElementById("message-input")
+message_button = document.getElementById("message-button")
+
+const sendMessage = (message) => {
+	console.log("[SENT]")
+	console.table(message)
+	ws.send(JSON.stringify(message));
+}
+
+const talk = () => {
+	if (message_input.value != "") {
+		const message = {
+			type: "player-update",
+			subtype: "talk",
+			content: message_input.value
+		}
+		message_input.value = ""
+
+		sendMessage(message)
+	}
+}
+
+message_button.addEventListener("click", talk)
+
+/*
+ * NETWORKING
+ */
 
 const ws = new WebSocket("ws://localhost:8082")
 
+// Connection
 ws.addEventListener("open", () => {
 	console.log("Connected to server")
+	
+	// Informs server of userinfo
+	const message = {
+		type:			"join",
+		room:			djangoData.room,
+		username: djangoData.username,
+	}
+	sendMessage(message)
 })
 
 ws.addEventListener("message", (received) => {
-	console.log("Received", received)
-	const msg = JSON.parse(received.data);
 
-	if (msg.type == "server-message") {
-		console.log("SERVER MESSAGE:", msg.content);
+	// Parses and logs received message
+	const msg = JSON.parse(received.data);
+	console.log("[RECEIVED]")
+	console.table(msg)
+
+	// Processes message according to type
+	if (msg.type == "server-message") { console.warn("[SERVER]", msg.content); }
+	else if (msg.type == "state") {
+
+		// Updates "players" array with state
+		players = []
+		msg.state.forEach(member => {
+			const p = new Player(member.id, member.username, member.x, member.y)
+			addPlayer(p)
+		})
+	} else if (msg.type == "player-update") {
+
+		let player = players.find(p => p.id == msg.id) // Sender
+
+		if (msg.subtype == "move") {
+			player.move(msg.x, msg.y)
+		} else if (msg.subtype == "talk") {
+			player.last_message = msg.content
+		}
 	}
+
+	draw()
+})
+
+// Disconnection
+ws.addEventListener("close", () => {
+	console.log("Disconnected from server")
 })
